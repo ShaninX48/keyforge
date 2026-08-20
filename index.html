@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KeyForge — Typing Speed Tester for Programmers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="navy">
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">{ }</div>
+      <div>
+        <div class="brand-name display">KeyForge</div>
+        <div class="brand-tag">Typing Speed & Accuracy Tester — built for programmers</div>
+      </div>
+    </div>
+    <div class="top-controls">
+      <button class="icon-btn" id="soundBtn" title="Toggle sound">🔊</button>
+      <div class="theme-menu">
+        <button class="icon-btn" id="themeBtn" title="Theme">🎨</button>
+        <div class="theme-dropdown" id="themeDropdown">
+          <div class="theme-opt" data-theme="amber"><span class="swatch" style="background:#f2b544"></span>Amber Dark</div>
+          <div class="theme-opt" data-theme="terminal"><span class="swatch" style="background:#4ee08a"></span>Terminal Green</div>
+          <div class="theme-opt" data-theme="dusk"><span class="swatch" style="background:#c792ea"></span>Dusk Violet</div>
+          <div class="theme-opt" data-theme="paper"><span class="swatch" style="background:#a8551d"></span>Paper Light</div>
+          <div class="theme-opt" data-theme="navy"><span class="swatch" style="background:#2f8cff"></span>Electric Navy</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modenav">
+    <button class="mode-btn active" data-mode="code">Code</button>
+    <button class="mode-btn" data-mode="text">Text</button>
+    <button class="mode-btn" data-mode="custom">Custom</button>
+    <button class="mode-btn" data-mode="zen">Zen</button>
+    <button class="mode-btn" data-mode="challenge">Challenge</button>
+  </div>
+
+  <!-- CONFIG BAR -->
+  <div class="config-bar" id="configBar">
+    <select class="lang-select" id="langSelect">
+      <option value="javascript">JavaScript</option>
+      <option value="python">Python</option>
+      <option value="cpp">C++</option>
+      <option value="java">Java</option>
+    </select>
+    <div class="sep"></div>
+    <div class="seg" id="durationSeg">
+      <button data-dur="15">15s</button>
+      <button data-dur="30" class="active">30s</button>
+      <button data-dur="60">60s</button>
+      <button data-dur="120">120s</button>
+    </div>
+    <div class="sep"></div>
+    <div class="seg" id="wordSeg" style="display:none">
+      <button data-words="25">25</button>
+      <button data-words="50" class="active">50</button>
+      <button data-words="100">100</button>
+    </div>
+  </div>
+
+  <!-- CHALLENGE PICKER -->
+  <div id="challengePanel" style="display:none;margin-bottom:20px;">
+    <div class="challenge-list" id="challengeList"></div>
+  </div>
+
+  <!-- LIVE STATS -->
+  <div class="live-stats">
+    <div class="live-stat"><div class="val" id="statTime">30</div><div class="lab">Time</div></div>
+    <div class="live-stat"><div class="val" id="statWpm">0</div><div class="lab">WPM</div></div>
+    <div class="live-stat"><div class="val" id="statAcc">100%</div><div class="lab">Accuracy</div></div>
+  </div>
+
+  <!-- TYPE STAGE -->
+  <div class="type-stage" id="typeStage">
+    <div id="textDisplay"></div>
+    <textarea id="hiddenInput" class="hidden-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" aria-label="Typing input"></textarea>
+    <div class="stage-hint" id="stageHint">Tap here and start typing to begin</div>
+  </div>
+
+  <div class="below-stage">
+    <div class="hint-text">New test: <kbd>Tab</kbd> + <kbd>Enter</kbd></div>
+    <button class="restart-btn" id="restartBtn">↻ Restart</button>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="results" id="resultsPanel">
+    <div class="results-grid" id="resultsGrid"></div>
+    <div class="graph-box">
+      <div class="box-title">WPM over time</div>
+      <canvas id="wpmGraph"></canvas>
+    </div>
+    <div class="box-title">Error heatmap</div>
+    <div class="heatmap" id="heatmap"></div>
+    <div class="ach-strip" id="achStrip"></div>
+    <div class="results-actions">
+      <button class="btn-primary" id="nextTestBtn">Next test →</button>
+      <button class="btn-secondary" id="closeResultsBtn">Close</button>
+    </div>
+  </div>
+
+  <div class="footer-strip">
+    <div class="fs-item"><span class="fire">🔥</span> Streak: <b id="streakVal">0</b> days</div>
+    <div class="fs-item">🏆 Best WPM: <b id="bestWpmVal">0</b></div>
+    <div class="fs-item">🎯 Best Accuracy: <b id="bestAccVal">0%</b></div>
+    <div class="fs-item">📊 Total tests: <b id="totalTestsVal">0</b></div>
+  </div>
+
+</div>
+
+<!-- CUSTOM TEXT MODAL -->
+<div class="modal-overlay" id="customModal">
+  <div class="modal">
+    <h3>Paste your own code / text</h3>
+    <textarea id="customTextArea" placeholder="Paste your code or text here..."></textarea>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="customCancelBtn">Cancel</button>
+      <button class="btn-primary" id="customUseBtn">Use this</button>
+    </div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
