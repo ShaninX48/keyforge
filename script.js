@@ -1,5 +1,7 @@
 (function(){
 
+const APP_VERSION = "1.1.0";
+
 /* ============ DATA ============ */
 const SNIPPETS = {
   javascript: [
