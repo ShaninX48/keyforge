@@ -57,6 +57,8 @@
       <button data-dur="30" class="active">30s</button>
       <button data-dur="60">60s</button>
       <button data-dur="120">120s</button>
+      <button data-dur="custom" id="customTimeBtn" title="Custom time">⚙</button>
+      <input type="number" id="customTimeInput" class="custom-time-input" min="5" max="600" step="5" placeholder="s" title="Custom seconds (5–600)" style="display:none">
     </div>
     <div class="sep"></div>
     <div class="seg" id="wordSeg" style="display:none">
@@ -86,7 +88,7 @@
   </div>
 
   <div class="below-stage">
-    <div class="hint-text">New test: <kbd>Tab</kbd> + <kbd>Enter</kbd></div>
+    <div class="hint-text">New test: hold <kbd>Tab</kbd> + <kbd>Enter</kbd> or <kbd>Shift</kbd> + <kbd>Enter</kbd></div>
     <button class="restart-btn" id="restartBtn">↻ Restart</button>
   </div>
 

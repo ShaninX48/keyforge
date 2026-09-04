@@ -160,7 +160,7 @@ const ACHIEVEMENTS = [
   {id:"streak7", title:"Week Warrior", check:(r,best,total,streak)=>streak>=7}
 ];
 
-const THEME_COLORS = {amber:"#f2b544", terminal:"#4ee08a", dusk:"#c792ea", paper:"#a8551d"};
+const THEME_COLORS = {amber:"#f2b544", terminal:"#4ee08a", dusk:"#c792ea", paper:"#a8551d", navy:"#2f8cff"};
 
 /* ============ TOKENIZER (basic syntax highlighting) ============ */
 function tokenize(text, lang){
@@ -188,16 +188,24 @@ function tokenize(text, lang){
     if(lang==="python" && ch==="#"){
       let j=i; while(j<n && text[j] !== "\n"){ types[j]="com"; j++; } i=j; continue;
     }
-    // string
+    // string (handles escaped quotes like \" )
     if(ch==='"'||ch==="'"||ch==="`"){
       const quote = ch; let j=i+1; types[i]="str";
-      while(j<n && text[j]!==quote){ types[j]="str"; j++; }
-      if(j<n){ types[j]="str"; j++; }
+      while(j<n){
+        if(text[j]==="\\" && j+1<n){ types[j]="str"; types[j+1]="str"; j+=2; continue; }
+        if(text[j]===quote){ types[j]="str"; j++; break; }
+        types[j]="str"; j++;
+      }
       i=j; continue;
     }
-    // number
+    // number (don't swallow ranges like 3...5)
     if(/[0-9]/.test(ch)){
-      let j=i; while(j<n && /[0-9.]/.test(text[j])){ types[j]="num"; j++; } i=j; continue;
+      let j=i; let dots=0;
+      while(j<n && /[0-9.]/.test(text[j])){
+        if(text[j]==="."){ dots++; if(dots>1) break; }
+        types[j]="num"; j++;
+      }
+      i=j; continue;
     }
     // word (identifier / keyword / function call)
     if(/[A-Za-z_]/.test(ch)){
@@ -210,7 +218,7 @@ function tokenize(text, lang){
       i=j; continue;
     }
     // punctuation
-    if(/[{}()\[\];,.<>=+\-*/%!&|:]/.test(ch)){
+    if(/[{}()\[\];,.<>=+\-*/%!&#|:]/.test(ch)){
       types[i]="punc"; i++; continue;
     }
     i++;
@@ -224,9 +232,10 @@ const state = {
   lang:"javascript",
   durationTarget:30,
   wordTarget:50,
-  timeLimited:true,
+  usingWordMode:false,
   tokens:[],
   typedStatus:[], // null | 'correct' | 'incorrect' | 'autoskip'
+  charCost:[], // per-index {k,c,e} so backspace can subtract stats
   cursor:0,
   bufferLen:0,
   started:false,
@@ -234,6 +243,7 @@ const state = {
   startTime:0,
   timerId:null,
   timeLeft:30,
+  zenElapsed:0,
   errors:0,
   keystrokes:0,
   correctKeystrokes:0,
@@ -324,15 +334,10 @@ function pickText(){
   return {text: combined, lang: state.lang};
 }
 
-function buildIndentMap(text){
-  // find leading-whitespace runs at start of each line for Tab handling
-  const lines = text.split("\n");
-  return lines.map(l => (l.match(/^[ \t]*/)||[""])[0]);
-}
-
 /* ============ RENDER TEXT ============ */
 function renderText(){
   textDisplay.innerHTML = "";
+  markCursor._last = null;
   const frag = document.createDocumentFragment();
   state.tokens.forEach((tok, idx)=>{
     const span = document.createElement("span");
@@ -347,12 +352,16 @@ function renderText(){
 
 function markCursor(){
   const spans = textDisplay.children;
-  for(let i=0;i<spans.length;i++){
-    spans[i].classList.remove("current");
+  if(markCursor._last != null && markCursor._last < spans.length){
+    spans[markCursor._last].classList.remove("current");
+  } else {
+    for(let i=0;i<spans.length;i++){ spans[i].classList.remove("current"); }
   }
   if(state.cursor < spans.length){
     spans[state.cursor].classList.add("current");
-    spans[state.cursor].scrollIntoView({block:"nearest"});
+    markCursor._last = state.cursor;
+  } else {
+    markCursor._last = null;
   }
 }
 
@@ -369,6 +378,7 @@ function newTest(){
   const {text, lang} = pickText();
   state.tokens = tokenize(text, lang);
   state.typedStatus = new Array(state.tokens.length).fill(null);
+  state.charCost = new Array(state.tokens.length).fill(null);
   state.cursor = 0;
   state.bufferLen = 0;
   hiddenInput.value = "";
@@ -381,12 +391,18 @@ function newTest(){
   state.keyErrorMap = {};
   state.wpmSamples = [];
   state.timeLeft = state.durationTarget;
+  state.zenElapsed = 0;
 
-  state.timeLimited = (state.mode !== "text") ? true : true; // both use timer by default except word mode toggled separately
-  // word-count mode only applies to text mode via wordSeg
   resultsPanel.classList.remove("show");
   stageHint.style.display = "flex";
-  statTime.textContent = state.usingWordMode ? state.tokens.filter(t=>t.ch===" ").length + 1 : state.durationTarget;
+  if(state.usingWordMode){
+    const totalWords = state.tokens.filter(t=>t.ch===" ").length + 1;
+    statTime.textContent = totalWords;
+  } else if(state.mode === "zen"){
+    statTime.textContent = "∞";
+  } else {
+    statTime.textContent = state.durationTarget;
+  }
   statWpm.textContent = "0";
   statAcc.textContent = "100%";
   renderText();
@@ -399,26 +415,47 @@ function startTest(){
   stageHint.style.display = "none";
   typeStage.classList.add("focused");
 
-  if(!state.usingWordMode){
-    state.timerId = setInterval(()=>{
-      state.timeLeft -= 1;
-      statTime.textContent = state.timeLeft;
-      updateLiveWpm();
-      if(state.timeLeft <= 0){
-        endTest();
-      }
-    }, 1000);
+  if(state.usingWordMode){
+    return; // word mode: no timer, ends on completion
   }
+  if(state.mode === "zen"){
+    // zen: count up, never auto-finish
+    state.timerId = setInterval(()=>{
+      state.zenElapsed += 1;
+      statTime.textContent = state.zenElapsed + "s";
+      updateLiveWpm(true);
+    }, 1000);
+    return;
+  }
+  state.timerId = setInterval(()=>{
+    state.timeLeft -= 1;
+    statTime.textContent = state.timeLeft;
+    updateLiveWpm(true);
+    if(state.timeLeft <= 0){
+      endTest();
+    }
+  }, 1000);
 }
 
-function updateLiveWpm(){
+function calcWpm(){
   const elapsedMin = (Date.now() - state.startTime) / 60000;
-  if(elapsedMin <= 0) return;
-  const wpm = Math.round((state.correctKeystrokes/5) / elapsedMin);
-  statWpm.textContent = Math.max(0,wpm);
-  const acc = state.keystrokes ? Math.round((state.correctKeystrokes/state.keystrokes)*100) : 100;
-  statAcc.textContent = acc + "%";
-  state.wpmSamples.push({t: Math.round((Date.now()-state.startTime)/1000), wpm: Math.max(0,wpm)});
+  if(elapsedMin <= 0 || !state.started) return 0;
+  return Math.max(0, Math.round((state.correctKeystrokes/5) / elapsedMin));
+}
+
+function calcAcc(){
+  return state.keystrokes ? Math.round((state.correctKeystrokes/state.keystrokes)*100) : 100;
+}
+
+function updateLiveWpm(pushSample){
+  if(!state.started) return;
+  const wpm = calcWpm();
+  statWpm.textContent = wpm;
+  statAcc.textContent = calcAcc() + "%";
+  // only timer ticks push graph samples — per-keystroke pushes made the graph jagged
+  if(pushSample){
+    state.wpmSamples.push({t: Math.round((Date.now()-state.startTime)/1000), wpm});
+  }
 }
 
 function endTest(){
@@ -426,11 +463,12 @@ function endTest(){
   state.finished = true;
   clearInterval(state.timerId);
   typeStage.classList.remove("focused");
+  // final sample so graph reaches the end
+  updateLiveWpm(true);
   const elapsedMin = Math.max((Date.now()-state.startTime)/60000, 0.01);
-  const grossWords = state.keystrokes/5;
-  const netWords = Math.max(state.correctKeystrokes/5 - state.errors/5, 0);
-  const wpm = Math.max(0, Math.round(netWords/elapsedMin));
-  const accuracy = state.keystrokes ? Math.round((state.correctKeystrokes/state.keystrokes)*100) : 100;
+  // same formula as live WPM so the numbers match (incorrect keys simply don't add to correct)
+  const wpm = Math.max(0, Math.round((state.correctKeystrokes/5)/elapsedMin));
+  const accuracy = calcAcc();
 
   const result = {
     wpm, accuracy, errors: state.errors, mode: state.mode,
@@ -510,37 +548,51 @@ hiddenInput.addEventListener("input", ()=>{
 
   if(val.length > prevLen){
     const added = val.slice(prevLen);
+    // anti-cheat: pasting many chars at once would auto-complete with 100%
+    if(added.length > 3){
+      hiddenInput.value = val.slice(0, prevLen);
+      return;
+    }
     for(const ch of added){ processTypedChar(ch); }
   } else if(val.length < prevLen){
     let removed = prevLen - val.length;
     while(removed > 0 && state.cursor > 0){ stepBack(); removed--; }
   }
-  state.bufferLen = val.length;
+  state.bufferLen = hiddenInput.value.length;
 
   markCursor();
   checkCompletion();
 
   // keep the buffer small so it never grows unbounded on very long tests
   if(hiddenInput.value.length > 500){
-    hiddenInput.value = "";
-    state.bufferLen = 0;
+    const keep = hiddenInput.value.slice(-100);
+    hiddenInput.value = keep;
+    state.bufferLen = keep.length;
   }
 });
 
 function doTabIndent(){
-  // indentation-aware: consume the full expected run of spaces (or a single \t) at cursor
+  // indentation-aware: consume the full expected run of spaces (or a single \t) at cursor.
+  // Counts as ONE keystroke total (not +8) so WPM isn't inflated.
   let idx = state.cursor;
   let consumed = 0;
-  while(state.tokens[idx] && (state.tokens[idx].ch === " ") && consumed < 8){
-    registerChar(idx, true, true);
-    idx++; consumed++;
-    if(state.tokens[idx-1] && state.tokens[idx-2] && state.tokens[idx].ch !== " ") break;
+  let first = true;
+  while(state.tokens[idx] && state.tokens[idx].ch === " " && consumed < 8){
+    registerChar(idx, true, true, first);
+    idx++; consumed++; first = false;
   }
   if(consumed === 0 && state.tokens[state.cursor] && state.tokens[state.cursor].ch === "\t"){
-    registerChar(state.cursor, true, true);
-    idx = state.cursor+1;
+    registerChar(state.cursor, true, true, true);
+    idx = state.cursor+1; consumed = 1;
+  }
+  if(consumed > 0){
+    // keep hidden buffer in sync so backspace accounting stays aligned
+    // (programmatic set doesn't fire 'input', so no double-processing)
+    hiddenInput.value += " ".repeat(consumed);
+    state.bufferLen = hiddenInput.value.length;
   }
   state.cursor = idx;
+  updateLiveWpm(false);
   markCursor();
   checkCompletion();
 }
@@ -557,14 +609,17 @@ function processTypedChar(inputChar){
   state.cursor++;
 
   // bracket / quote auto-skip: if just-typed char has an immediate matching closer next
-  // and it directly follows (simulating editor auto-close skip-over)
+  // and it directly follows (simulating editor auto-close skip-over).
+  // The auto-skipped closer is free (countStats=false) — no WPM inflation.
   const PAIRS = {"(" : ")", "[":"]", "{":"}", '"':'"', "'":"'"};
   if(isCorrect && PAIRS[inputChar]){
     const closer = PAIRS[inputChar];
     const nextTok = state.tokens[state.cursor];
     if(nextTok && nextTok.ch === closer){
-      registerChar(state.cursor, true, true);
+      registerChar(state.cursor, true, true, false);
       state.cursor++;
+      hiddenInput.value += closer;
+      state.bufferLen = hiddenInput.value.length;
     }
   }
 }
@@ -572,47 +627,87 @@ function processTypedChar(inputChar){
 function stepBack(){
   if(state.cursor<=0) return;
   state.cursor--;
+  // subtract whatever this char had counted, so accuracy recovers after correction
+  const cost = state.charCost[state.cursor];
+  if(cost){
+    state.keystrokes = Math.max(0, state.keystrokes - (cost.k||0));
+    state.correctKeystrokes = Math.max(0, state.correctKeystrokes - (cost.c||0));
+    state.errors = Math.max(0, state.errors - (cost.e||0));
+    if(cost.errKey){
+      const k = cost.errKey;
+      if(state.keyErrorMap[k]){
+        state.keyErrorMap[k]--;
+        if(state.keyErrorMap[k] <= 0) delete state.keyErrorMap[k];
+      }
+    }
+    state.charCost[state.cursor] = null;
+  }
   applyCharState(state.cursor, "pending");
   state.typedStatus[state.cursor]=null;
+  updateLiveWpm(false);
 }
 
-function registerChar(idx, isCorrect, isAuto){
-  state.keystrokes++;
-  if(isCorrect){
-    state.correctKeystrokes++;
-    applyCharState(idx, isAuto ? "autoskip" : "correct");
+function registerChar(idx, isCorrect, isAuto, countStats){
+  if(countStats === undefined) countStats = !isAuto;
+  if(countStats){
+    state.keystrokes++;
+    if(isCorrect){
+      state.correctKeystrokes++;
+      state.charCost[idx] = {k:1, c:1, e:0};
+      applyCharState(idx, isAuto ? "autoskip" : "correct");
+    } else {
+      state.errors++;
+      applyCharState(idx, "incorrect");
+      const ch = state.tokens[idx].ch;
+      const key = ch === " " ? "␣" : (ch === "\n" ? "⏎" : ch);
+      state.keyErrorMap[key] = (state.keyErrorMap[key]||0)+1;
+      state.charCost[idx] = {k:1, c:0, e:1, errKey:key};
+    }
   } else {
-    state.errors++;
-    applyCharState(idx, "incorrect");
-    const ch = state.tokens[idx].ch;
-    const key = ch === " " ? "␣" : (ch === "\n" ? "⏎" : ch);
-    state.keyErrorMap[key] = (state.keyErrorMap[key]||0)+1;
+    // free auto char: visual only, no score impact
+    state.charCost[idx] = {k:0, c:0, e:0};
+    applyCharState(idx, "autoskip");
   }
   playClick(!isCorrect);
   state.typedStatus[idx] = isCorrect ? "correct" : "incorrect";
-  updateLiveWpm();
+  updateLiveWpm(false);
 }
 
 function checkCompletion(){
   if(state.usingWordMode){
-    statTime.textContent = Math.max(state.tokens.filter((t,i)=>i<state.cursor && t.ch===" ").length, 0);
+    const totalWords = state.tokens.filter(t=>t.ch===" ").length + 1;
+    const doneWords = state.tokens.filter((t,i)=>i<state.cursor && t.ch===" ").length;
+    statTime.textContent = Math.max(totalWords - doneWords, 0);
   }
   if(state.cursor >= state.tokens.length){
     endTest();
   }
 }
 
-/* ============ GLOBAL RESTART: Tab + Enter ============ */
+/* ============ GLOBAL RESTART: hold Tab then press Enter ============
+// Tab alone = indent (handled in hiddenInput). To avoid wiping a code run on a
+// fast Tab->Enter newline, restart only fires if Tab has been HELD ~350ms.
 let tabHeld = false;
+let tabDownAt = 0;
 document.addEventListener("keydown", (e)=>{
-  if(e.key === "Tab") tabHeld = true;
-  if(tabHeld && e.key === "Enter"){
+  if(e.key === "Tab"){
+    if(!tabHeld){ tabHeld = true; tabDownAt = Date.now(); }
+  }
+  if(e.key === "Enter" && tabHeld && (Date.now()-tabDownAt) > 350){
+    // Shift+Enter always works as an alternative that never conflicts with indent
+    e.preventDefault();
+    newTest();
+    hiddenInput.focus();
+    tabHeld = false;
+  }
+  if(e.key === "Enter" && e.shiftKey && !tabHeld){
+    // Shift+Enter quick restart (no hold needed)
     e.preventDefault();
     newTest();
     hiddenInput.focus();
   }
 });
-document.addEventListener("keyup", (e)=>{ if(e.key==="Tab") tabHeld=false; });
+document.addEventListener("keyup", (e)=>{ if(e.key==="Tab"){ tabHeld=false; tabDownAt=0; } });
 
 document.getElementById("restartBtn").addEventListener("click", ()=>{ newTest(); hiddenInput.focus(); });
 document.getElementById("nextTestBtn").addEventListener("click", ()=>{ newTest(); hiddenInput.focus(); });
@@ -721,8 +816,7 @@ function renderChallenges(){
       (done ? `<div class="challenge-progress">Completed</div>` : "");
     card.addEventListener("click", ()=>{
       state.activeChallenge = ch.id;
-      // pick sensible defaults for the challenge
-      if(ch.id==="wpm40code"){ state.mode="code"; }
+      // stay in challenge mode (don't flip state.mode to "code" — that desyncs the tabs)
       newTest();
       renderChallenges();
       hiddenInput.focus();
@@ -751,22 +845,77 @@ document.querySelectorAll(".mode-btn").forEach(btn=>{
       return;
     }
     if(state.mode==="challenge"){ renderChallenges(); }
-    if(state.mode==="zen"){ state.usingWordMode = false; state.timeLimited=false; }
     newTest();
   });
 });
 
 langSelect.addEventListener("change", (e)=>{ state.lang = e.target.value; newTest(); });
 
+const customTimeBtn = document.getElementById("customTimeBtn");
+const customTimeInput = document.getElementById("customTimeInput");
+
+function setDuration(secs, save){
+  secs = Math.max(5, Math.min(600, Math.round(secs)||30));
+  state.durationTarget = secs;
+  state.usingWordMode = false;
+  if(save !== false){ try{ localStorage.setItem("kf_duration", JSON.stringify(secs)); }catch(e){} }
+  durationSeg.querySelectorAll("button").forEach(b=>b.classList.remove("active"));
+  const preset = durationSeg.querySelector(`button[data-dur="${secs}"]`);
+  if(preset){
+    preset.classList.add("active");
+    customTimeBtn.textContent = "⚙";
+    customTimeInput.style.display = "none";
+  } else {
+    customTimeBtn.classList.add("active");
+    customTimeBtn.textContent = secs + "s";
+  }
+  newTest();
+}
+
+// restore saved duration (no newTest yet — INIT below will render once)
+try{
+  const savedDur = JSON.parse(localStorage.getItem("kf_duration")||"30");
+  if(savedDur && savedDur !== 30){
+    const secs = Math.max(5, Math.min(600, Math.round(savedDur)||30));
+    state.durationTarget = secs;
+    state.timeLeft = secs;
+    durationSeg.querySelectorAll("button").forEach(b=>b.classList.remove("active"));
+    const preset = durationSeg.querySelector(`button[data-dur="${secs}"]`);
+    if(preset){ preset.classList.add("active"); }
+    else { customTimeBtn.classList.add("active"); customTimeBtn.textContent = secs + "s"; }
+  }
+}catch(e){}
+
 durationSeg.querySelectorAll("button").forEach(btn=>{
   btn.addEventListener("click", ()=>{
-    durationSeg.querySelectorAll("button").forEach(b=>b.classList.remove("active"));
-    btn.classList.add("active");
-    state.durationTarget = parseInt(btn.dataset.dur,10);
-    state.usingWordMode = false;
-    newTest();
+    if(btn.dataset.dur === "custom"){
+      const showing = customTimeInput.style.display !== "none";
+      customTimeInput.style.display = showing ? "none" : "inline-block";
+      if(!showing){ customTimeInput.value = state.durationTarget; customTimeInput.focus(); customTimeInput.select(); }
+      return;
+    }
+    customTimeInput.style.display = "none";
+    setDuration(parseInt(btn.dataset.dur,10));
   });
 });
+
+function applyCustomTime(){
+  const v = parseInt(customTimeInput.value,10);
+  if(!v || v < 5 || v > 600){
+    customTimeInput.style.borderColor = "var(--bad)";
+    setTimeout(()=>{ customTimeInput.style.borderColor = ""; }, 800);
+    return;
+  }
+  customTimeInput.style.display = "none";
+  setDuration(v);
+  hiddenInput.focus();
+}
+customTimeInput.addEventListener("keydown", (e)=>{
+  e.stopPropagation();
+  if(e.key === "Enter"){ applyCustomTime(); }
+  if(e.key === "Escape"){ customTimeInput.style.display = "none"; hiddenInput.focus(); }
+});
+customTimeInput.addEventListener("change", applyCustomTime);
 
 wordSeg.querySelectorAll("button").forEach(btn=>{
   btn.addEventListener("click", ()=>{
@@ -815,7 +964,6 @@ soundBtn.addEventListener("click", ()=>{
 });
 
 /* ============ INIT ============ */
-state.usingWordMode = false;
 refreshSoundBtn();
 refreshFooter();
 newTest();
