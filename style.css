@@ -130,10 +130,14 @@
     background:var(--panel);border:1px solid var(--border);border-radius:14px;
     padding:30px 32px;font-size:19px;line-height:1.9;letter-spacing:.01em;
     position:relative;user-select:none;cursor:text;min-height:150px;
+        white-space:pre-wrap;
+           overflow-wrap:break-word;
+
+
+
   }
   .type-stage.focused{border-color:var(--accent);}
-  .type-stage .char{position:relative;white-space:pre;}
-  .char.pending{color:var(--text-faint);}
+.type-stage .char{position:relative;white-space:pre-wrap;}  .char.pending{color:var(--text-faint);}
   .char.pending.kw{color:color-mix(in srgb, var(--kw) 45%, var(--text-faint));}
   .char.pending.str{color:color-mix(in srgb, var(--str) 45%, var(--text-faint));}
   .char.pending.com{color:var(--text-faint);}
